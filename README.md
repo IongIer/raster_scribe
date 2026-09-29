@@ -18,9 +18,13 @@ Tested on Linux and Windows; macOS remains untested.
 
 ## Install
 
-1. Download [raster_scribe-0.1.0.zip](https://github.com/IongIer/raster_scribe/releases/download/scribe-v0.1.0/raster_scribe-0.1.0.zip).
-2. In QGIS, open **Plugins → Manage and Install Plugins → Install from ZIP**
-   and select it. Use this plugin ZIP, not GitHub's **Source code** archive.
+1. In QGIS, open **Plugins → Manage and Install Plugins**.
+2. Search for **Raster Scribe** and click **Install Plugin**. You can also view
+   the [Raster Scribe listing in the QGIS Plugin Repository](https://plugins.qgis.org/plugins/raster_scribe/).
+
+To install a specific release manually, download the plugin ZIP from the
+[GitHub release](https://github.com/IongIer/raster_scribe/releases) and use
+**Install from ZIP**. Do not use GitHub's **Source code** archive.
 
 Scribe can be installed alongside Raster Tracer and keeps separate preferences.
 
