@@ -28,10 +28,11 @@ UV ?= uv
 COMPILED_RESOURCE_FILES = resources.py
 RESOURCE_SRC=$(shell grep '^ *<file' resources.qrc | sed 's@</file>@@g;s/.*>//g' | tr '\n' ' ')
 
-.PHONY: default compile test package transup transcompile transclean clean doc lint format format-check
+.PHONY: default compile test test-tools package release-check transup transcompile transclean clean doc lint format format-check
 default:
 	@echo "make lint / format / format-check: check or format Python with uv and Ruff"
 	@echo "make package: build the plugin ZIP using checked-in resources.py"
+	@echo "make release-check: validate release notes, build and scan the ZIP"
 	@echo "make compile: regenerate resources.py after asset changes (requires pyrcc5)"
 	@echo "make test: run tests with a configured PyQGIS Python"
 	@echo "See documentation/development.md and test/README.md for setup and tests."
@@ -48,8 +49,17 @@ compile: $(COMPILED_RESOURCE_FILES)
 test:
 	$(PYTHON) scripts/run-tests.py
 
+test-tools:
+	$(PYTHON) -m unittest test.test_check_plugin_package test.test_release_notes
+
 package:
 	$(PYTHON) scripts/package-plugin.py
+
+release-check:
+	@mkdir -p dist
+	$(PYTHON) scripts/release-notes.py "$$RELEASE_TAG" > dist/release-notes.md
+	$(PYTHON) scripts/package-plugin.py --output dist/raster-scribe.zip
+	$(UV) run --locked python scripts/check-plugin-package.py dist/raster-scribe.zip
 
 transup:
 	@PYTHON="$(PYTHON)" scripts/update-strings.sh $(LOCALES)

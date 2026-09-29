@@ -30,7 +30,19 @@ lint fixes. Review the changes before committing.
 Follow the [testing guide](../test/README.md) for local tests and the packaged
 QGIS matrix. Do not use `uv run make test` or install QGIS
 runtime packages in `.venv`. The [CI workflow](../.github/workflows/compatibility.yml)
-runs lint, formatting, and packaged tests on `master` pushes and manual runs.
+runs checks and packaged tests on `master` pushes, version tags, and manual runs.
+
+## Release
+
+1. Update the version and short changelog in `metadata.txt`; add a
+   `## X.Y.Z — YYYY-MM-DD` entry to `CHANGELOG.md`.
+2. Run `make release-check`, commit, and push to `master`.
+3. Tag that commit with `git tag scribe-vX.Y.Z`, then `git push origin scribe-vX.Y.Z`.
+
+After checks pass, CI creates the GitHub release with that changelog entry
+and the tested ZIP, then submits it to QGIS using the `QGIS_PLUGIN_TOKEN`
+repository secret. QGIS validation runs separately. Retry failed uploads
+with **Re-run failed jobs** in Actions.
 
 ## Update resources and translations
 

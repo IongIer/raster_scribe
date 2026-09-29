@@ -1,8 +1,9 @@
-name: QGIS compatibility
+name: Checks and release
 
 on:
   push:
     branches: [master]
+    tags: ['scribe-v*']
   workflow_dispatch:
 
 permissions:
@@ -10,15 +11,24 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
-  quality:
-    name: Ruff lint and format
+  package:
+    name: Check and package
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Confirm release commit is on master
+        if: github.ref_type == 'tag'
+        run: |
+          git merge-base --is-ancestor HEAD origin/master || {
+            echo "Tagged commit is not contained in master" >&2
+            exit 1
+          }
       - name: Install uv and select tooling Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -30,9 +40,24 @@ jobs:
         run: uv run --locked ruff check --output-format=github .
       - name: Check Python formatting
         run: uv run --locked ruff format --check .
+      - name: Test release tools
+        run: make test-tools
+      - name: Validate release notes, build and scan ZIP
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: make release-check
+      - name: Save package and release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: plugin-package
+          path: |
+            dist/raster-scribe.zip
+            dist/release-notes.md
+          if-no-files-found: error
 
   test:
     name: QGIS ${{ matrix.qgis }} / Qt ${{ matrix.qt }}
+    needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -55,11 +80,91 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@v7.0.1
-      - name: Package the plugin
-        run: python3 scripts/package-plugin.py --output /tmp/raster-scribe.zip
+      - uses: actions/download-artifact@v8
+        with:
+          name: plugin-package
+          path: dist
       - name: Test the installable ZIP
         run: >-
           python3 scripts/run-tests.py
-          --plugin-zip /tmp/raster-scribe.zip
+          --plugin-zip dist/raster-scribe.zip
           --expected-qgis '${{ matrix.qgis }}'
           --expected-qt-major '${{ matrix.qt }}'
+
+  publish:
+    name: Publish GitHub release and submit to QGIS
+    needs: [package, test]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/scribe-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Confirm QGIS upload secret is configured
+        env:
+          QGIS_PLUGIN_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+        run: |
+          if [ -z "$QGIS_PLUGIN_TOKEN" ]; then
+            echo "QGIS_PLUGIN_TOKEN secret is not configured" >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          name: plugin-package
+          path: dist
+      - name: Create GitHub release with tested ZIP
+        run: |
+          VERSION="${RELEASE_TAG#scribe-v}"
+          PACKAGE_NAME="raster_scribe-${VERSION}.zip"
+          mv dist/raster-scribe.zip "dist/$PACKAGE_NAME"
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release download "$RELEASE_TAG" --pattern "$PACKAGE_NAME" --dir "$RUNNER_TEMP/published"
+            cmp "dist/$PACKAGE_NAME" "$RUNNER_TEMP/published/$PACKAGE_NAME" || {
+              echo "Existing release ZIP differs from the tested package" >&2
+              exit 1
+            }
+            echo "GitHub release already contains the tested ZIP."
+          else
+            gh release create "$RELEASE_TAG" "dist/$PACKAGE_NAME" \
+              --verify-tag --title "Raster Scribe $VERSION" --notes-file dist/release-notes.md
+          fi
+      - name: Submit ZIP to QGIS plugin repository
+        env:
+          QGIS_PLUGIN_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+        run: |
+          VERSION="${RELEASE_TAG#scribe-v}"
+          PACKAGE="dist/raster_scribe-${VERSION}.zip"
+          VERSION_URL="https://plugins.qgis.org/plugins/raster_scribe/version/${VERSION}/"
+          status="$(curl --silent --show-error --max-time 60 --output "$RUNNER_TEMP/qgis-version.html" \
+            --write-out '%{http_code}' --header "Authorization: Bearer ${QGIS_PLUGIN_TOKEN}" "$VERSION_URL")"
+          case "$status" in
+            200)
+              echo "QGIS already has version ${VERSION}; skipping duplicate upload."
+              ;;
+            404)
+              curl --fail-with-body --silent --show-error --max-time 120 \
+                --output "$RUNNER_TEMP/qgis-upload-response.html" \
+                --header "Authorization: Bearer ${QGIS_PLUGIN_TOKEN}" \
+                --form "package=@${PACKAGE}" \
+                https://plugins.qgis.org/plugins/api/raster_scribe/version/add/ || {
+                  cat "$RUNNER_TEMP/qgis-upload-response.html" >&2
+                  exit 1
+                }
+              status="$(curl --silent --show-error --max-time 60 --output "$RUNNER_TEMP/qgis-version.html" \
+                --write-out '%{http_code}' --header "Authorization: Bearer ${QGIS_PLUGIN_TOKEN}" "$VERSION_URL")"
+              if [ "$status" != 200 ]; then
+                echo "QGIS upload did not create version ${VERSION} (HTTP ${status})" >&2
+                cat "$RUNNER_TEMP/qgis-upload-response.html" >&2
+                exit 1
+              fi
+              echo "Submitted ${VERSION} to QGIS; validation and approval run separately."
+              ;;
+            *)
+              echo "Could not check QGIS version status (HTTP ${status})" >&2
+              exit 1
+              ;;
+          esac

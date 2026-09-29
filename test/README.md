@@ -11,6 +11,8 @@ Core search and smoothing tests need ordinary Python, without QGIS or NumPy:
 python3 scripts/run-tests.py --core-only
 ```
 
+Release tooling tests also need only ordinary Python: `make test-tools`.
+
 For the full source-tree suite, use a Python interpreter configured for PyQGIS:
 
 ```sh
